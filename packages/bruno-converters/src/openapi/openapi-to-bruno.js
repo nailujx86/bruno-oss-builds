@@ -1,7 +1,7 @@
 import each from 'lodash/each';
 import get from 'lodash/get';
 import jsyaml from 'js-yaml';
-import { validateSchema, transformItemsInCollection, hydrateSeqInCollection, uuid } from '../common';
+import { validateSchema, transformItemsInCollection, hydrateSeqInCollection, uuid, sanitizeTag, sanitizeTags } from '../common';
 
 // Content type patterns for matching MIME type variants
 // These patterns handle structured types with many variants (e.g., application/ld+json, application/vnd.api+json)
@@ -347,6 +347,12 @@ const BODY_TYPE_HANDLERS = [
   }
 ];
 
+const getContentLevelExample = (bodyContent) => {
+  if (bodyContent.example !== undefined) return bodyContent.example;
+  const firstExample = Object.values(bodyContent.examples ?? {})[0];
+  return firstExample?.value;
+};
+
 /**
  * Extracts or generates an example value from an OpenAPI schema
  * Handles objects, arrays, primitives, and explicit examples
@@ -428,15 +434,18 @@ const populateRequestBody = ({ body, bodySchema, contentType }) => {
  * @param {*} params.exampleValue - The example value (object, array, or primitive)
  * @param {string} params.exampleName - Name of the example
  * @param {string} params.exampleDescription - Description of the example
- * @param {string|number} params.statusCode - HTTP status code (for response examples)
+ * @param {number} params.statusCode - HTTP status code (for response examples)
  * @param {string} params.contentType - Content type (e.g., 'application/json')
  * @param {Object} [params.requestBodySchema] - Optional request body schema to populate in the example
  * @param {string} [params.requestBodyContentType] - Optional request body content type
  * @returns {Object} Bruno example object
  */
+
 const createBrunoExample = ({ brunoRequestItem, exampleValue, exampleName, exampleDescription, statusCode, contentType, requestBodySchema = null, requestBodyContentType = null }) => {
   const sanitized = String(exampleName ?? '').replace(/\r?\n/g, ' ').trim();
   const name = sanitized || `${statusCode} Response`;
+  const numericStatus = Number(statusCode);
+  const safeStatus = Number.isFinite(numericStatus) ? numericStatus : null;
   // Deep copy the body to avoid shared references
   const bodyCopy = {
     mode: brunoRequestItem.request.body.mode,
@@ -462,8 +471,8 @@ const createBrunoExample = ({ brunoRequestItem, exampleValue, exampleName, examp
       body: bodyCopy
     },
     response: {
-      status: String(statusCode),
-      statusText: getStatusText(statusCode),
+      status: safeStatus,
+      statusText: safeStatus ? getStatusText(safeStatus) : null,
       headers: contentType ? [
         {
           uid: uuid(),
@@ -488,7 +497,7 @@ const createBrunoExample = ({ brunoRequestItem, exampleValue, exampleName, examp
   return brunoExample;
 };
 
-const transformOpenapiRequestItem = (request, usedNames = new Set()) => {
+const transformOpenapiRequestItem = (request, usedNames = new Set(), options = {}) => {
   let _operationObject = request.operationObject;
 
   let operationName = _operationObject.summary || _operationObject.operationId || _operationObject.description;
@@ -524,7 +533,9 @@ const transformOpenapiRequestItem = (request, usedNames = new Set()) => {
     uid: uuid(),
     name: operationName,
     type: 'http-request',
+    tags: sanitizeTags(request.operationObject.tags || [], options),
     request: {
+      docs: _operationObject.description,
       url: ensureUrl(request.global.server + path),
       method: request.method.toUpperCase(),
       auth: {
@@ -733,7 +744,14 @@ const transformOpenapiRequestItem = (request, usedNames = new Set()) => {
     const content = get(_operationObject, 'requestBody.content', {});
     const mimeType = Object.keys(content)[0];
     const bodyContent = content[mimeType] || {};
-    const bodySchema = bodyContent.schema;
+    let bodySchema = bodyContent.schema;
+
+    if (bodySchema?.example === undefined) {
+      const contentExample = getContentLevelExample(bodyContent);
+      if (contentExample !== undefined) {
+        bodySchema = { ...bodySchema, example: contentExample };
+      }
+    }
 
     // Normalize: lowercase (object keys may vary in case)
     const normalizedMimeType = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';
@@ -780,7 +798,7 @@ const transformOpenapiRequestItem = (request, usedNames = new Set()) => {
      * @param {*} params.responseExampleValue - The response example value
      * @param {string} params.exampleName - Name of the example
      * @param {string} params.exampleDescription - Description of the example
-     * @param {string|number} params.statusCode - HTTP status code
+     * @param {number} params.statusCode - HTTP status code
      * @param {string} params.responseContentType - Response content type
      * @param {string} [params.responseExampleKey] - Optional response example key for matching
      */
@@ -1006,13 +1024,13 @@ const resolveRefs = (spec, components = spec?.components, cache = new Map()) => 
   return resolved;
 };
 
-const groupRequestsByTags = (requests) => {
+const groupRequestsByTags = (requests, options = {}) => {
   let _groups = {};
   let ungrouped = [];
   each(requests, (request) => {
     let tags = request.operationObject.tags || [];
     if (tags.length > 0) {
-      let tag = tags[0].trim(); // take first tag and trim whitespace
+      let tag = sanitizeTag(tags[0].trim()); // take first tag, trim whitespace, and sanitize
 
       if (tag) {
         if (!_groups[tag]) {
@@ -1037,7 +1055,7 @@ const groupRequestsByTags = (requests) => {
   return [groups, ungrouped];
 };
 
-const groupRequestsByPath = (requests) => {
+const groupRequestsByPath = (requests, options = {}) => {
   const pathGroups = {};
 
   // Group requests by their path segments
@@ -1097,7 +1115,7 @@ const groupRequestsByPath = (requests) => {
   const buildFolderStructure = (group) => {
     // Create a new usedNames set for each folder/subfolder scope
     const localUsedNames = new Set();
-    const items = group.requests.map((req) => transformOpenapiRequestItem(req, localUsedNames));
+    const items = group.requests.map((req) => transformOpenapiRequestItem(req, localUsedNames, options));
 
     // Add sub-folders
     const subFolders = [];
@@ -1245,10 +1263,10 @@ export const parseOpenApiCollection = (data, options = {}) => {
     const groupingType = options.groupBy || 'tags';
 
     if (groupingType === 'path') {
-      brunoCollection.items = groupRequestsByPath(allRequests);
+      brunoCollection.items = groupRequestsByPath(allRequests, options);
     } else {
       // Default tag-based grouping
-      let [groups, ungroupedRequests] = groupRequestsByTags(allRequests);
+      let [groups, ungroupedRequests] = groupRequestsByTags(allRequests, options);
       let brunoFolders = groups.map((group) => {
         return {
           uid: uuid(),
@@ -1269,11 +1287,11 @@ export const parseOpenApiCollection = (data, options = {}) => {
               name: group.name
             }
           },
-          items: group.requests.map((req) => transformOpenapiRequestItem(req, usedNames))
+          items: group.requests.map((req) => transformOpenapiRequestItem(req, usedNames, options))
         };
       });
 
-      let ungroupedItems = ungroupedRequests.map((req) => transformOpenapiRequestItem(req, usedNames));
+      let ungroupedItems = ungroupedRequests.map((req) => transformOpenapiRequestItem(req, usedNames, options));
       let brunoCollectionItems = brunoFolders.concat(ungroupedItems);
       brunoCollection.items = brunoCollectionItems;
     }
@@ -1390,9 +1408,12 @@ export const openApiToBruno = (openApiSpecification, options = {}) => {
     }
 
     const collection = parseOpenApiCollection(openApiSpecification, options);
+
     const transformedCollection = transformItemsInCollection(collection);
+
     const hydratedCollection = hydrateSeqInCollection(transformedCollection);
     const validatedCollection = validateSchema(hydratedCollection);
+
     return validatedCollection;
   } catch (err) {
     console.error('Error converting OpenAPI to Bruno:', err);

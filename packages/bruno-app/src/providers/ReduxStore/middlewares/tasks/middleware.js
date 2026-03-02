@@ -3,9 +3,9 @@ import each from 'lodash/each';
 import filter from 'lodash/filter';
 import { createListenerMiddleware } from '@reduxjs/toolkit';
 import { removeTaskFromQueue } from 'providers/ReduxStore/slices/app';
-import { addTab, closeTabs, closeAllCollectionTabs } from 'providers/ReduxStore/slices/tabs';
-import { collectionAddFileEvent, collectionChangeFileEvent } from 'providers/ReduxStore/slices/collections';
-import { findCollectionByUid, findItemInCollectionByPathname, getDefaultRequestPaneTab, findItemInCollectionByItemUid, findItemInCollection, flattenItems } from 'utils/collections/index';
+import { addTab } from 'providers/ReduxStore/slices/tabs';
+import { collectionAddFileEvent, collectionChangeFileEvent, collectionBatchAddItems } from 'providers/ReduxStore/slices/collections';
+import { findCollectionByUid, findItemInCollectionByPathname, getDefaultRequestPaneTab, findItemInCollectionByItemUid } from 'utils/collections/index';
 import { taskTypes } from './utils';
 
 const taskMiddleware = createListenerMiddleware();
@@ -29,14 +29,13 @@ taskMiddleware.startListening({
         const collection = findCollectionByUid(state.collections.collections, collectionUid);
         if (collection && collection.mountStatus === 'mounted' && !collection.isLoading) {
           const item = findItemInCollectionByPathname(collection, task.itemPathname);
-          const isTransient = item?.isTransient ?? false;
           if (item) {
             listenerApi.dispatch(
               addTab({
                 uid: item.uid,
                 collectionUid: collection.uid,
                 requestPaneTab: getDefaultRequestPaneTab(item),
-                preview: !isTransient
+                preview: task?.preview ?? true
               })
             );
           }
@@ -48,6 +47,57 @@ taskMiddleware.startListening({
           })
         );
       }
+    });
+  }
+});
+
+/*
+ * When files are added via batch processing (e.g., during collection mount or when new files are created),
+ * we need to check if any of the added files match pending OPEN_REQUEST tasks.
+ * This handles the case where file additions go through the batch reducer instead of individual events.
+ */
+taskMiddleware.startListening({
+  actionCreator: collectionBatchAddItems,
+  effect: (action, listenerApi) => {
+    const state = listenerApi.getState();
+    const items = action.payload?.items || [];
+
+    // Extract all addFile events from the batch
+    const addFileItems = items.filter((item) => item.eventType === 'addFile');
+    if (addFileItems.length === 0) return;
+
+    const openRequestTasks = filter(state.app.taskQueue, { type: taskTypes.OPEN_REQUEST });
+    if (openRequestTasks.length === 0) return;
+
+    each(addFileItems, ({ payload: file }) => {
+      const collectionUid = file?.meta?.collectionUid;
+      if (!collectionUid) return;
+
+      each(openRequestTasks, (task) => {
+        if (collectionUid === task.collectionUid && file?.meta?.pathname === task.itemPathname) {
+          const collection = findCollectionByUid(state.collections.collections, collectionUid);
+          if (collection && collection.mountStatus === 'mounted' && !collection.isLoading) {
+            const item = findItemInCollectionByPathname(collection, task.itemPathname);
+            const isTransient = item?.isTransient ?? false;
+            if (item) {
+              listenerApi.dispatch(
+                addTab({
+                  uid: item.uid,
+                  collectionUid: collection.uid,
+                  requestPaneTab: getDefaultRequestPaneTab(item),
+                  preview: !isTransient
+                })
+              );
+            }
+          }
+
+          listenerApi.dispatch(
+            removeTaskFromQueue({
+              taskUid: task.uid
+            })
+          );
+        }
+      });
     });
   }
 });
@@ -93,39 +143,4 @@ taskMiddleware.startListening({
   }
 });
 
-/*
- * When tabs are closed, check if any of them are transient requests.
- * If so, delete the temporary files from the filesystem.
- * Note: If a transient request was saved (moved to permanent location),
- * the file will already be deleted, which is expected behavior.
- */
-taskMiddleware.startListening({
-  actionCreator: closeTabs,
-  effect: (action, listenerApi) => {
-    const state = listenerApi.getState();
-    const tabUids = action.payload.tabUids || [];
-    const { ipcRenderer } = window;
-
-    each(tabUids, (tabUid) => {
-      const collections = state.collections.collections;
-
-      for (const collection of collections) {
-        const item = findItemInCollection(collection, tabUid);
-        const isTransient = item?.isTransient ?? false;
-        if (item && isTransient) {
-          ipcRenderer
-            .invoke('renderer:delete-item', item.pathname, item.type, collection.pathname)
-            .then(() => {})
-            .catch((err) => {
-              if (err.message && !err.message.includes('does not exist')) {
-                console.error(`Failed to delete transient request file: ${item.pathname}`, err);
-              }
-            });
-
-          break;
-        }
-      }
-    });
-  }
-});
 export default taskMiddleware;

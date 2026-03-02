@@ -42,10 +42,12 @@ const prepareRequest = async (item = {}, collection = {}) => {
     url: request.url,
     headers: headers,
     name: item.name,
+    pathname: item.pathname,
     tags: item.tags || [],
     pathParams: request.params?.filter((param) => param.type === 'path'),
     settings: item.settings,
-    responseType: 'arraybuffer'
+    responseType: 'arraybuffer',
+    mode: request.body?.mode
   };
 
   const collectionRoot = collection?.draft?.root || collection?.root || {};
@@ -371,7 +373,8 @@ const prepareRequest = async (item = {}, collection = {}) => {
   if (request.body.mode === 'graphql') {
     const graphqlQuery = {
       query: get(request, 'body.graphql.query'),
-      variables: JSON.parse(decomment(get(request, 'body.graphql.variables') || '{}'))
+      // Parse variables only after interpolation (github.com/usebruno/bruno/issues/884)
+      variables: decomment(get(request, 'body.graphql.variables') || '{}')
     };
     if (!contentTypeDefined) {
       axiosRequest.headers['content-type'] = 'application/json';
@@ -396,6 +399,7 @@ const prepareRequest = async (item = {}, collection = {}) => {
 
   if (request.tests) {
     axiosRequest.tests = request.tests;
+    axiosRequest.testsMetadata = request.testsMetadata;
   }
 
   axiosRequest.vars = request.vars;

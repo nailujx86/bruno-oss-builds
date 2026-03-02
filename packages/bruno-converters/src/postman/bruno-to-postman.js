@@ -267,11 +267,23 @@ export const brunoToPostman = (collection) => {
         return {
           mode: 'formdata',
           formdata: map(body.multipartForm || [], (bodyItem) => {
+            const isFile = bodyItem.type === 'file';
+
+            const getSrc = () => {
+              if (!bodyItem.value) return null;
+              if (Array.isArray(bodyItem.value)) {
+                if (bodyItem.value.length === 0) return null;
+                if (bodyItem.value.length === 1) return bodyItem.value[0];
+                return bodyItem.value;
+              }
+              return bodyItem.value;
+            };
             return {
               key: bodyItem.name || '',
-              value: bodyItem.value || '',
               disabled: !bodyItem.enabled,
-              type: 'default'
+              type: isFile ? 'file' : 'text',
+              ...(isFile ? { src: getSrc() } : { value: bodyItem.value || '' }),
+              ...(bodyItem.contentType && { contentType: bodyItem.contentType })
             };
           })
         };
@@ -503,8 +515,15 @@ export const brunoToPostman = (collection) => {
         };
       } else if (isItemARequest(item)) {
         const requestEvents = generateEventSection(item.request);
+        const method = (item.request?.method || 'GET').toUpperCase();
+        const hasBody = item.request?.body && item.request.body.mode !== 'none';
+
+        const methodsWithoutBody = ['GET', 'HEAD', 'OPTIONS'];
+        const needsBodyPruningDisabled = hasBody && methodsWithoutBody.includes(method);
+
         const postmanItem = {
           name: item.name || 'Untitled Request',
+          ...(needsBodyPruningDisabled ? { protocolProfileBehavior: { disableBodyPruning: true } } : {}),
           request: generateRequestSection(item.request),
           ...(requestEvents.length ? { event: requestEvents } : {})
         };

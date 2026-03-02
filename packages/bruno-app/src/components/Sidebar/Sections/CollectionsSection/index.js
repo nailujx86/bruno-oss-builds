@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import toast from 'react-hot-toast';
+import get from 'lodash/get';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   IconArrowsSort,
@@ -15,16 +16,21 @@ import {
   IconTerminal2
 } from '@tabler/icons';
 
-import { importCollection, openCollection } from 'providers/ReduxStore/slices/collections/actions';
+import { importCollection, openCollection, importCollectionFromZip } from 'providers/ReduxStore/slices/collections/actions';
 import { sortCollections } from 'providers/ReduxStore/slices/collections/index';
+import { savePreferences } from 'providers/ReduxStore/slices/app';
 import { normalizePath } from 'utils/common/path';
+import { isScratchCollection } from 'utils/collections';
 
 import MenuDropdown from 'ui/MenuDropdown';
 import ActionIcon from 'ui/ActionIcon';
 import ImportCollection from 'components/Sidebar/ImportCollection';
 import ImportCollectionLocation from 'components/Sidebar/ImportCollectionLocation';
+import BulkImportCollectionLocation from 'components/Sidebar/BulkImportCollectionLocation';
+import CloneGitRepository from 'components/Sidebar/CloneGitRespository';
 import RemoveCollectionsModal from 'components/Sidebar/Collections/RemoveCollectionsModal/index';
 import CreateCollection from 'components/Sidebar/CreateCollection';
+import WelcomeModal from 'components/WelcomeModal';
 import Collections from 'components/Sidebar/Collections';
 import SidebarSection from 'components/Sidebar/SidebarSection';
 import { openDevtoolsAndSwitchToTerminal } from 'utils/terminal';
@@ -38,37 +44,75 @@ const CollectionsSection = () => {
 
   const { collections } = useSelector((state) => state.collections);
   const { collectionSortOrder } = useSelector((state) => state.collections);
+  const preferences = useSelector((state) => state.app.preferences);
   const [collectionsToClose, setCollectionsToClose] = useState([]);
 
   const [importData, setImportData] = useState(null);
   const [createCollectionModalOpen, setCreateCollectionModalOpen] = useState(false);
   const [importCollectionModalOpen, setImportCollectionModalOpen] = useState(false);
   const [importCollectionLocationModalOpen, setImportCollectionLocationModalOpen] = useState(false);
+  const [showCloneGitModal, setShowCloneGitModal] = useState(false);
+  const [gitRepositoryUrl, setGitRepositoryUrl] = useState(null);
+
+  // Default to true (don't show modal) so that:
+  // 1. Existing users who upgrade (no hasSeenWelcomeModal in their prefs) don't see it
+  // 2. The modal doesn't flash before preferences are loaded from the electron process
+  // Only genuinely new users will have hasSeenWelcomeModal explicitly set to false by onboarding
+  const hasSeenWelcomeModal = get(preferences, 'onboarding.hasSeenWelcomeModal', true);
+  const showWelcomeModal = !hasSeenWelcomeModal;
+
+  const handleDismissWelcomeModal = () => {
+    const updatedPreferences = {
+      ...preferences,
+      onboarding: {
+        ...preferences.onboarding,
+        hasSeenWelcomeModal: true
+      }
+    };
+    dispatch(savePreferences(updatedPreferences)).catch(() => {
+      toast.error('Failed to save preferences');
+    });
+  };
 
   const workspaceCollections = useMemo(() => {
     if (!activeWorkspace) return [];
-    return collections.filter((c) =>
-      activeWorkspace.collections?.some((wc) => normalizePath(wc.path) === normalizePath(c.pathname))
-    );
-  }, [activeWorkspace, collections]);
 
-  const handleImportCollection = ({ rawData, type }) => {
+    return collections.filter((c) => {
+      if (isScratchCollection(c, workspaces)) {
+        return false;
+      }
+      return activeWorkspace.collections?.some((wc) => normalizePath(wc.path) === normalizePath(c.pathname));
+    });
+  }, [activeWorkspace, collections, workspaces]);
+
+  const handleImportCollection = ({ rawData, type, repositoryUrl, ...rest }) => {
     setImportCollectionModalOpen(false);
-    setImportData({ rawData, type });
+
+    if (type === 'git-repository') {
+      setGitRepositoryUrl(repositoryUrl);
+      setShowCloneGitModal(true);
+      return;
+    }
+
+    setImportData({ rawData, type, ...rest });
     setImportCollectionLocationModalOpen(true);
   };
 
   const handleImportCollectionLocation = (convertedCollection, collectionLocation, options = {}) => {
-    dispatch(importCollection(convertedCollection, collectionLocation, options))
+    const importAction = options.isZipImport
+      ? importCollectionFromZip(convertedCollection.zipFilePath, collectionLocation)
+      : importCollection(convertedCollection, collectionLocation, options);
+
+    dispatch(importAction)
       .then(() => {
         setImportCollectionLocationModalOpen(false);
         setImportData(null);
-        toast.success('Collection imported successfully');
-      })
-      .catch((err) => {
-        console.error(err);
-        toast.error('An error occurred while importing the collection');
       });
+  };
+
+  const handleCloseGitModal = () => {
+    setShowCloneGitModal(false);
+    setGitRepositoryUrl(null);
   };
 
   const handleToggleSearch = () => {
@@ -230,6 +274,23 @@ const CollectionsSection = () => {
 
   return (
     <>
+      {showWelcomeModal && (
+        <WelcomeModal
+          onDismiss={handleDismissWelcomeModal}
+          onImportCollection={() => {
+            handleDismissWelcomeModal();
+            setImportCollectionModalOpen(true);
+          }}
+          onCreateCollection={() => {
+            handleDismissWelcomeModal();
+            setCreateCollectionModalOpen(true);
+          }}
+          onOpenCollection={() => {
+            handleDismissWelcomeModal();
+            handleOpenCollection();
+          }}
+        />
+      )}
       {createCollectionModalOpen && (
         <CreateCollection
           onClose={() => setCreateCollectionModalOpen(false)}
@@ -241,12 +302,26 @@ const CollectionsSection = () => {
           handleSubmit={handleImportCollection}
         />
       )}
-      {importCollectionLocationModalOpen && importData && (
+      {importCollectionLocationModalOpen && importData && (importData.type !== 'multiple' && importData.type !== 'bulk') && (
         <ImportCollectionLocation
           rawData={importData.rawData}
           format={importData.type}
           onClose={() => setImportCollectionLocationModalOpen(false)}
           handleSubmit={handleImportCollectionLocation}
+        />
+      )}
+      {importCollectionLocationModalOpen && importData && (importData.type === 'multiple' || importData.type === 'bulk') && (
+        <BulkImportCollectionLocation
+          importData={importData}
+          onClose={() => setImportCollectionLocationModalOpen(false)}
+          handleSubmit={handleImportCollectionLocation}
+        />
+      )}
+      {showCloneGitModal && (
+        <CloneGitRepository
+          onClose={handleCloseGitModal}
+          onFinish={handleCloseGitModal}
+          collectionRepositoryUrl={gitRepositoryUrl}
         />
       )}
       <SidebarSection
