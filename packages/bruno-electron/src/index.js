@@ -35,7 +35,6 @@ if (os.platform() === 'linux') {
 
 const menuTemplate = require('./app/menu-template');
 const { openCollection } = require('./app/collections');
-const LastOpenedCollections = require('./store/last-opened-collections');
 const registerNetworkIpc = require('./ipc/network');
 const registerCollectionsIpc = require('./ipc/collection');
 const registerFilesystemIpc = require('./ipc/filesystem');
@@ -57,12 +56,10 @@ const TerminalManager = require('./ipc/terminal');
 const { safeParseJSON, safeStringifyJSON } = require('./utils/common');
 const { getDomainsWithCookies } = require('./utils/cookies');
 const { cookiesStore } = require('./store/cookies');
-const onboardUser = require('./app/onboarding');
 const SystemMonitor = require('./app/system-monitor');
 const { getIsRunningInRosetta } = require('./utils/arch');
 const { handleAppProtocolUrl, getAppProtocolUrlFromArgv } = require('./utils/deeplink');
 
-const lastOpenedCollections = new LastOpenedCollections();
 const systemMonitor = new SystemMonitor();
 const terminalManager = new TerminalManager();
 
@@ -199,8 +196,8 @@ app.on('ready', async () => {
   }
 
   // Initialize system proxy cache early (non-blocking)
-  const { initializeSystemProxy } = require('./store/system-proxy');
-  initializeSystemProxy().catch((err) => {
+  const { fetchSystemProxy } = require('./store/system-proxy');
+  fetchSystemProxy().catch((err) => {
     console.warn('Failed to initialize system proxy cache:', err);
   });
 
@@ -219,7 +216,8 @@ app.on('ready', async () => {
       nodeIntegration: true,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      webviewTag: true
+      webviewTag: true,
+      zoomFactor: 1.0
     },
     title: 'Bruno',
     icon: path.join(__dirname, 'about/256x256.png'),
@@ -249,8 +247,29 @@ app.on('ready', async () => {
     }
   });
 
+  // Handle zoom shortcuts
+  ipcMain.on('main:zoom-in', () => {
+    if (mainWindow && mainWindow.webContents) {
+      const currentZoom = mainWindow.webContents.getZoomLevel();
+      mainWindow.webContents.setZoomLevel(currentZoom + 0.5);
+    }
+  });
+
+  ipcMain.on('main:zoom-out', () => {
+    if (mainWindow && mainWindow.webContents) {
+      const currentZoom = mainWindow.webContents.getZoomLevel();
+      mainWindow.webContents.setZoomLevel(currentZoom - 0.5);
+    }
+  });
+
+  ipcMain.on('main:zoom-reset', () => {
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.setZoomLevel(0);
+    }
+  });
+
   ipcMain.on('renderer:window-close', () => {
-    if (!isWindows && !isLinux) return;
+    // if (!isWindows && !isLinux) return;
     mainWindow.close();
   });
 
@@ -426,12 +445,7 @@ app.on('ready', async () => {
       };
     } catch (err) {
       console.error('Error wrapping webContents.send:', err);
-      // Ensure onboarding gate is unblocked so renderer:ready doesn't hang
-      ipcMain.emit('main:onboarding-complete');
     }
-
-    // Handle onboarding
-    await onboardUser(mainWindow, lastOpenedCollections);
 
     // Send cookies list after renderer is ready
     try {
@@ -491,14 +505,6 @@ app.on('window-all-closed', app.quit);
 // Open collection from Recent menu (#1521)
 app.on('open-file', (event, path) => {
   openCollection(mainWindow, collectionWatcher, path);
-});
-
-// Register the global shortcuts
-app.on('browser-window-focus', () => {
-  // Quick fix for Electron issue #29996: https://github.com/electron/electron/issues/29996
-  globalShortcut.register('Ctrl+=', () => {
-    incrementZoomAndPersist(10);
-  });
 });
 
 // Disable global shortcuts when not focused
