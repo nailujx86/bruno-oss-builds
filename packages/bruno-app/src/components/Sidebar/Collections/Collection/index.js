@@ -22,6 +22,7 @@ import {
   IconFolder,
   IconBook
 } from '@tabler/icons';
+import OpenAPISyncIcon from 'components/Icons/OpenAPISync';
 import { toggleCollection, collapseFullCollection } from 'providers/ReduxStore/slices/collections';
 import { mountCollection, moveCollectionAndPersist, handleCollectionItemDrop, pasteItem, showInFolder, saveCollectionSecurityConfig } from 'providers/ReduxStore/slices/collections/actions';
 import { useDispatch, useSelector } from 'react-redux';
@@ -67,13 +68,26 @@ const Collection = ({ collection, searchText }) => {
   const [isKeyboardFocused, setIsKeyboardFocused] = useState(false);
   const [showEmptyState, setShowEmptyState] = useState(false);
   const dispatch = useDispatch();
-  const isLoading = areItemsLoading(collection);
+  const isLoading = collection.isLoading;
   const collectionRef = useRef(null);
-  const itemCount = collection.items?.length || 0;
+  // Only count persisted items; transients don't affect empty state
+  const itemCount = collection.items?.filter((i) => !i.isTransient).length || 0;
 
   const isCollectionFocused = useSelector(isTabForItemActive({ itemUid: collection.uid }));
   const { hasCopiedItems } = useSelector((state) => state.app.clipboard);
   const menuDropdownRef = useRef(null);
+
+  // Open the OpenAPI Sync tab
+  const openOpenAPISyncTab = () => {
+    ensureCollectionIsMounted();
+    dispatch(
+      addTab({
+        uid: uuid(),
+        collectionUid: collection.uid,
+        type: 'openapi-sync'
+      })
+    );
+  };
 
   const handleRun = () => {
     dispatch(
@@ -367,6 +381,12 @@ const Collection = ({ collection, searchText }) => {
       onClick: () => {
         setShowCloneCollectionModalOpen(true);
       }
+    },
+    {
+      id: 'sync-openapi',
+      leftSection: OpenAPISyncIcon,
+      label: 'OpenAPI',
+      onClick: openOpenAPISyncTab
     },
     ...(hasCopiedItems
       ? [

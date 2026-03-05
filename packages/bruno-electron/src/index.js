@@ -39,11 +39,11 @@ const registerNetworkIpc = require('./ipc/network');
 const registerCollectionsIpc = require('./ipc/collection');
 const registerFilesystemIpc = require('./ipc/filesystem');
 const registerPreferencesIpc = require('./ipc/preferences');
-const { parsedFileCacheStore } = require('./store/parsed-file-cache-idb');
 const registerSystemMonitorIpc = require('./ipc/system-monitor');
 const registerWorkspaceIpc = require('./ipc/workspace');
 const registerApiSpecIpc = require('./ipc/apiSpec');
 const registerGitIpc = require('./ipc/git');
+const registerOpenAPISyncIpc = require('./ipc/openapi-sync');
 const collectionWatcher = require('./app/collection-watcher');
 const WorkspaceWatcher = require('./app/workspace-watcher');
 const ApiSpecWatcher = require('./app/apiSpecsWatcher');
@@ -461,9 +461,6 @@ app.on('ready', async () => {
     });
   });
 
-  // Initialize the parsed file cache IPC handlers
-  parsedFileCacheStore.initialize(mainWindow);
-
   // register all ipc handlers
   registerNetworkIpc(mainWindow);
   registerGlobalEnvironmentsIpc(mainWindow, globalEnvironmentsManager);
@@ -475,6 +472,7 @@ app.on('ready', async () => {
   registerFilesystemIpc(mainWindow);
   registerSystemMonitorIpc(mainWindow, systemMonitor);
   registerGitIpc(mainWindow);
+  registerOpenAPISyncIpc(mainWindow);
 });
 
 // Quit the app once all windows are closed
