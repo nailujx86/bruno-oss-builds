@@ -57,7 +57,7 @@ const transformCollection = async (collection, type) => {
  */
 export const createWorkspaceWithUniqueName = (location) => {
   return async (dispatch) => {
-    const name = await ipcRenderer?.invoke('renderer:find-unique-folder-name', 'untitled workspace', location) || 'untitled workspace';
+    const name = await ipcRenderer?.invoke('renderer:find-unique-folder-name', 'Untitled Workspace', location) || 'Untitled Workspace';
     const folderName = sanitizeName(name);
     const result = await dispatch(createWorkspaceAction(name, folderName, location));
     if (result?.workspaceUid) {
@@ -498,7 +498,7 @@ export const createCollectionInWorkspace = (collectionName, collectionFolderName
       throw new Error('Workspace not found');
     }
 
-    const projectCollectionLocation = `${currentWorkspace.pathname}/collections`;
+    const projectCollectionLocation = path.join(currentWorkspace.pathname, 'collections');
 
     return await dispatch(createCollection(collectionName, collectionFolderName, projectCollectionLocation, {
       workspaceId: currentWorkspace.pathname
