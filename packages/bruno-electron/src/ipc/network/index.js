@@ -1,6 +1,7 @@
 const https = require('https');
 const axios = require('axios');
 const path = require('path');
+const { applyOAuth1ToRequest } = require('@usebruno/requests');
 const qs = require('qs');
 const decomment = require('decomment');
 const contentDispositionParser = require('content-disposition');
@@ -35,7 +36,7 @@ const { cookiesStore } = require('../../store/cookies');
 const registerGrpcEventHandlers = require('./grpc-event-handlers');
 const { registerWsEventHandlers } = require('./ws-event-handlers');
 const { getCertsAndProxyConfig, buildCertsAndProxyConfig } = require('./cert-utils');
-const { buildFormUrlEncodedPayload, isFormData } = require('@usebruno/common').utils;
+const { buildFormUrlEncodedPayload, isFormData, extractBoundaryFromContentType } = require('@usebruno/common').utils;
 
 const ERROR_OCCURRED_WHILE_EXECUTING_REQUEST = 'Error occurred while executing the request!';
 
@@ -143,9 +144,10 @@ const configureRequest = async (
   request.maxRedirects = 0;
 
   const { promptVariables = {} } = collection;
-  let { proxyMode, proxyConfig, httpsAgentRequestFields, interpolationOptions } = certsAndProxyConfig;
+  let { proxyMode, proxyModeReason, proxyConfig, httpsAgentRequestFields, interpolationOptions } = certsAndProxyConfig;
   let axiosInstance = makeAxiosInstance({
     proxyMode,
+    proxyModeReason,
     proxyConfig,
     requestMaxRedirects,
     httpsAgentRequestFields,
@@ -156,6 +158,14 @@ const configureRequest = async (
   if (request.ntlmConfig) {
     axiosInstance = NtlmClient(request.ntlmConfig, axiosInstance.defaults);
     delete request.ntlmConfig;
+  }
+
+  if (request.oauth1config) {
+    try {
+      applyOAuth1ToRequest(request, collectionPath);
+    } catch (error) {
+      throw new Error(`OAuth1 signing failed: ${error.message}`);
+    }
   }
 
   if (request.oauth2) {
@@ -230,7 +240,7 @@ const configureRequest = async (
               const url = new URL(request.url);
               url.searchParams.set(tokenQueryKey, tokenValue);
               request.url = url.toString();
-            } catch (error) {}
+            } catch (error) { }
           }
         }
         break;
@@ -247,7 +257,7 @@ const configureRequest = async (
               const url = new URL(request.url);
               url.searchParams.set(tokenQueryKey, tokenValue);
               request.url = url.toString();
-            } catch (error) {}
+            } catch (error) { }
           }
         }
         break;
@@ -264,7 +274,7 @@ const configureRequest = async (
               const url = new URL(request.url);
               url.searchParams.set(tokenQueryKey, tokenValue);
               request.url = url.toString();
-            } catch (error) {}
+            } catch (error) { }
           }
         }
         break;
@@ -281,7 +291,7 @@ const configureRequest = async (
               const url = new URL(request.url);
               url.searchParams.set(tokenQueryKey, tokenValue);
               request.url = url.toString();
-            } catch (error) {}
+            } catch (error) { }
           }
         }
         break;
@@ -344,9 +354,6 @@ const configureRequest = async (
     urlObj.searchParams.set(key, value);
     request.url = urlObj.toString();
   }
-
-  // Remove apiKeyAuthValueForQueryParams, already interpolated and added to URL
-  delete request.apiKeyAuthValueForQueryParams;
 
   return axiosInstance;
 };
@@ -609,7 +616,12 @@ const registerNetworkIpc = (mainWindow) => {
         if (contentType !== 'multipart/form-data') {
           // Patch: Axios leverages getHeaders method to get the headers so FormData should be monkey patched
           const formHeaders = form.getHeaders();
-          formHeaders['content-type'] = `${contentType}; boundary=${form.getBoundary()}`;
+          const existingBoundary = extractBoundaryFromContentType(contentType);
+          if (existingBoundary) {
+            formHeaders['content-type'] = contentType;
+          } else {
+            formHeaders['content-type'] = `${contentType}; boundary=${form.getBoundary()}`;
+          }
           form.getHeaders = function () {
             return formHeaders;
           };
@@ -760,6 +772,7 @@ const registerNetworkIpc = (mainWindow) => {
     // flag to see if the stream needs to be handled as an actual stream or
     // is it just a data stream from axios
     let isResponseStream = false;
+    let requestSent;
     const brunoConfig = getBrunoConfig(collectionUid, collection);
     const scriptingConfig = get(brunoConfig, 'scripts', {});
     scriptingConfig.runtime = getJsSandboxRuntime(collection);
@@ -850,7 +863,7 @@ const registerNetworkIpc = (mainWindow) => {
         }
       });
 
-      let requestSent = {
+      requestSent = {
         url: request.url,
         method: request.method,
         headers: headersSent,
@@ -1127,7 +1140,8 @@ const registerNetworkIpc = (mainWindow) => {
         size: Buffer.byteLength(response.dataBuffer),
         duration: responseTime ?? 0,
         url: response.request ? response.request.protocol + '//' + response.request.host + response.request.path : null,
-        timeline: response.timeline
+        timeline: response.timeline,
+        requestSent
       };
     } catch (error) {
       deleteCancelToken(cancelTokenUid);
@@ -1137,7 +1151,8 @@ const registerNetworkIpc = (mainWindow) => {
       return {
         status: error?.status,
         error: error?.message || ERROR_OCCURRED_WHILE_EXECUTING_REQUEST,
-        timeline: error?.timeline
+        timeline: error?.timeline,
+        requestSent
       };
     }
   };
@@ -1645,6 +1660,11 @@ const registerNetworkIpc = (mainWindow) => {
                 error.response.headers.delete('request-duration');
                 error.response.data = data;
                 error.response.dataBuffer = dataBuffer;
+
+                // save cookies (4XX/5XX responses can also set cookies)
+                if (preferencesUtil.shouldStoreCookies()) {
+                  saveCookies(request.url, error.response.headers);
+                }
 
                 timeEnd = Date.now();
                 response = {

@@ -37,7 +37,8 @@ export const buildCommonLocators = (page: Page) => ({
   tabs: {
     requestTab: (requestName: string) => page.locator('.request-tab .tab-label').filter({ hasText: requestName }),
     activeRequestTab: () => page.locator('.request-tab.active'),
-    closeTab: (requestName: string) => page.locator('.request-tab').filter({ hasText: requestName }).getByTestId('request-tab-close-icon')
+    closeTab: (requestName: string) => page.locator('.request-tab').filter({ hasText: requestName }).getByTestId('request-tab-close-icon'),
+    draftIndicator: () => page.locator('.request-tab.active .has-changes-icon')
   },
   paneTabs: {
     responsiveTab: (key: string) => page.getByTestId(`responsive-tab-${key}`),
@@ -71,6 +72,9 @@ export const buildCommonLocators = (page: Page) => ({
     createEnvButton: () => page.locator('button[id="create-env"]'),
     envNameInput: () => page.locator('input[name="name"]')
   },
+  codeMirror: {
+    byTestId: (testId: string) => page.getByTestId(testId).locator('.CodeMirror').first()
+  },
   request: {
     urlInput: () => page.locator('#request-url .CodeMirror'),
     urlLine: () => page.locator('#request-url .CodeMirror-line'),
@@ -79,7 +83,7 @@ export const buildCommonLocators = (page: Page) => ({
     newRequestUrl: () => page.locator('#new-request-url .CodeMirror'),
     requestNameInput: () => page.getByPlaceholder('Request Name'),
     requestTestId: () => page.getByTestId('request-name'),
-    generateCodeButton: () => page.locator('#send-request .infotip').first(),
+    generateCodeButton: () => page.locator('#request-actions .infotip').first(),
     bodyModeSelector: () => page.getByTestId('request-body-mode-selector'),
     bodyEditor: () => page.getByTestId('request-body-editor')
   },
