@@ -871,10 +871,10 @@ describe('Response Translation', () => {
     expect(translatedCode).toBe('const allHeaders = res.headerList.all();');
   });
 
-  it('should translate pm.response.headers.each to res.headerList.forEach', () => {
+  it('should translate pm.response.headers.each to res.headerList.each', () => {
     const code = 'pm.response.headers.each(h => console.log(h.key));';
     const translatedCode = translateCode(code);
-    expect(translatedCode).toBe('res.headerList.forEach(h => console.log(h.key));');
+    expect(translatedCode).toBe('res.headerList.each(h => console.log(h.key));');
   });
 
   it('should translate pm.response.headers.filter to res.headerList.filter', () => {
@@ -893,5 +893,17 @@ describe('Response Translation', () => {
     const code = 'const obj = pm.response.headers.toObject();';
     const translatedCode = translateCode(code);
     expect(translatedCode).toBe('const obj = res.headerList.toObject();');
+  });
+
+  it('should translate pm.response.headers.toString to res.headerList.toString', () => {
+    const code = 'const str = pm.response.headers.toString();';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('const str = res.headerList.toString();');
+  });
+
+  it('should translate pm.response.headers.toJSON to res.headerList.toJSON', () => {
+    const code = 'const json = pm.response.headers.toJSON();';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('const json = res.headerList.toJSON();');
   });
 });

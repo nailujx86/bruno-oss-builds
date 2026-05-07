@@ -177,10 +177,10 @@ describe('Request Translation', () => {
     expect(translatedCode).toBe('const allHeaders = req.headerList.all();');
   });
 
-  it('should translate pm.request.headers.each to req.headerList.forEach', () => {
+  it('should translate pm.request.headers.each to req.headerList.each', () => {
     const code = 'pm.request.headers.each(h => console.log(h.key));';
     const translatedCode = translateCode(code);
-    expect(translatedCode).toBe('req.headerList.forEach(h => console.log(h.key));');
+    expect(translatedCode).toBe('req.headerList.each(h => console.log(h.key));');
   });
 
   it('should translate pm.request.headers.filter to req.headerList.filter', () => {
@@ -201,9 +201,39 @@ describe('Request Translation', () => {
     expect(translatedCode).toBe('req.headerList.clear();');
   });
 
+  it('should translate pm.request.headers.prepend to req.headerList.add', () => {
+    const code = 'pm.request.headers.prepend({key: "X-First", value: "1"});';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('req.headerList.add({key: "X-First", value: "1"});');
+  });
+
+  it('should translate pm.request.headers.insert to req.headerList.add (drops positional ref)', () => {
+    const code = 'pm.request.headers.insert({key: "X-Mid", value: "2"}, "ref");';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('req.headerList.add({key: "X-Mid", value: "2"});');
+  });
+
+  it('should translate pm.request.headers.insertAfter to req.headerList.add (drops positional ref)', () => {
+    const code = 'pm.request.headers.insertAfter({key: "X-After", value: "3"}, "ref");';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('req.headerList.add({key: "X-After", value: "3"});');
+  });
+
   it('should translate pm.request.headers.toObject to req.headerList.toObject', () => {
     const code = 'const obj = pm.request.headers.toObject();';
     const translatedCode = translateCode(code);
     expect(translatedCode).toBe('const obj = req.headerList.toObject();');
+  });
+
+  it('should translate pm.request.headers.toString to req.headerList.toString', () => {
+    const code = 'const str = pm.request.headers.toString();';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('const str = req.headerList.toString();');
+  });
+
+  it('should translate pm.request.headers.toJSON to req.headerList.toJSON', () => {
+    const code = 'const json = pm.request.headers.toJSON();';
+    const translatedCode = translateCode(code);
+    expect(translatedCode).toBe('const json = req.headerList.toJSON();');
   });
 });

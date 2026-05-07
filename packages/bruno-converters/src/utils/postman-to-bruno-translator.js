@@ -61,10 +61,12 @@ const simpleTranslations = {
   'pm.request.headers.indexOf': 'req.headerList.indexOf',
   'pm.request.headers.find': 'req.headerList.find',
   'pm.request.headers.filter': 'req.headerList.filter',
-  'pm.request.headers.each': 'req.headerList.forEach',
+  'pm.request.headers.each': 'req.headerList.each',
   'pm.request.headers.map': 'req.headerList.map',
   'pm.request.headers.reduce': 'req.headerList.reduce',
   'pm.request.headers.toObject': 'req.headerList.toObject',
+  'pm.request.headers.toString': 'req.headerList.toString',
+  'pm.request.headers.toJSON': 'req.headerList.toJSON',
   'pm.request.headers.clear': 'req.headerList.clear',
 
   // Response headers PropertyList methods (read-only)
@@ -75,10 +77,12 @@ const simpleTranslations = {
   'pm.response.headers.indexOf': 'res.headerList.indexOf',
   'pm.response.headers.find': 'res.headerList.find',
   'pm.response.headers.filter': 'res.headerList.filter',
-  'pm.response.headers.each': 'res.headerList.forEach',
+  'pm.response.headers.each': 'res.headerList.each',
   'pm.response.headers.map': 'res.headerList.map',
   'pm.response.headers.reduce': 'res.headerList.reduce',
   'pm.response.headers.toObject': 'res.headerList.toObject',
+  'pm.response.headers.toString': 'res.headerList.toString',
+  'pm.response.headers.toJSON': 'res.headerList.toJSON',
 
   // Request properties (pm.request.*)
   'pm.request.url.getHost': 'req.getHost',
@@ -406,6 +410,32 @@ const complexTransformations = [
 
       // Fallback: keep original args
       return j.callExpression(j.identifier('req.setHeader'), args);
+    }
+  },
+
+  // Lossy: positional header inserts → append (only keep the first arg, drop positional ref)
+  // pm.request.headers.prepend(item) -> req.headerList.add(item)
+  {
+    pattern: 'pm.request.headers.prepend',
+    transform: (path, j) => {
+      const args = path.parent.value.arguments;
+      return j.callExpression(j.identifier('req.headerList.add'), args.length > 0 ? [args[0]] : []);
+    }
+  },
+  // pm.request.headers.insert(item, before) -> req.headerList.add(item)
+  {
+    pattern: 'pm.request.headers.insert',
+    transform: (path, j) => {
+      const args = path.parent.value.arguments;
+      return j.callExpression(j.identifier('req.headerList.add'), args.length > 0 ? [args[0]] : []);
+    }
+  },
+  // pm.request.headers.insertAfter(item, after) -> req.headerList.add(item)
+  {
+    pattern: 'pm.request.headers.insertAfter',
+    transform: (path, j) => {
+      const args = path.parent.value.arguments;
+      return j.callExpression(j.identifier('req.headerList.add'), args.length > 0 ? [args[0]] : []);
     }
   },
 
