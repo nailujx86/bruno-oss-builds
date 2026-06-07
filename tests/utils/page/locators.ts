@@ -37,6 +37,7 @@ export const buildCommonLocators = (page: Page) => ({
   },
   tabs: {
     requestTab: (requestName: string) => page.locator('.request-tab .tab-label').filter({ hasText: requestName }),
+    folderTab: (folderName: string) => page.locator('.request-tab .tab-label').filter({ hasText: folderName }),
     activeRequestTab: () => page.locator('.request-tab.active'),
     closeTab: (requestName: string) => page.locator('.request-tab').filter({ hasText: requestName }).getByTestId('request-tab-close-icon'),
     draftIndicator: () => page.locator('.request-tab.active .has-changes-icon')
@@ -93,6 +94,9 @@ export const buildCommonLocators = (page: Page) => ({
     apiKey: {
       placementSelector: () => page.getByTestId('auth-placement-selector'),
       placementLabel: () => page.getByTestId('auth-placement-label')
+    },
+    oauth2: {
+      grantTypeDropdown: () => page.getByTestId('grant-type-dropdown')
     }
   },
   tags: {
@@ -128,7 +132,19 @@ export const buildCommonLocators = (page: Page) => ({
     envOption: (name: string) => page.locator('.dropdown-item').getByText(name, { exact: true }),
     parsingError: () => page.getByTestId('import-error-message'),
     browseLink: (root?: Locator) => (root ?? page).getByTestId('import-collection-browse-link'),
-    importButton: (root?: Locator) => (root ?? page).getByTestId('import-collection-location-modal-submit-btn')
+    importButton: (root?: Locator) => (root ?? page).getByTestId('import-collection-location-modal-submit-btn'),
+    ...(() => {
+      const issuesToast = () => page.getByTestId('import-issues-toast').last();
+      return {
+        issuesToast,
+        issuesToastTitle: () => issuesToast().getByTestId('import-issues-toast-title'),
+        issuesToastCopyBtn: () => issuesToast().getByTestId('import-issues-copy-btn'),
+        issuesToastReportBtn: () => issuesToast().getByTestId('import-issues-report-btn'),
+        issuesToastIncludeItemsCheckbox: () => issuesToast().getByTestId('import-issues-include-items-checkbox'),
+        issuesToastCloseBtn: () => issuesToast().getByTestId('import-issues-toast-close'),
+        issuesToastUrlTooLongWarning: () => issuesToast().getByTestId('import-issues-url-too-long-warning')
+      };
+    })()
   },
   /**
    * Build generic table locators for any table with a testId
