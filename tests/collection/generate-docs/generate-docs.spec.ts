@@ -1,10 +1,9 @@
 import jsyaml from 'js-yaml';
-import { test, expect } from '../../../playwright';
+import { test, expect, Page } from '../../../playwright';
 import { generateCollectionDocs } from '../../utils/page';
 import { buildCommonLocators } from '../../utils/page/locators';
 import {
   getCollectionTreeStructure,
-  waitForCollectionMount,
   type CollectionTreeItem
 } from '../../utils/page/mounting';
 
@@ -78,6 +77,51 @@ const sidebarItemsToNameTree = (items: CollectionTreeItem[] = []): NameTree[] =>
     return node;
   });
 
+/**
+ * Environments defined in the fixture collection (one `.bru` file each under
+ * `environments/`). None of them are selected by default in the modal — inclusion
+ * is opt-in.
+ */
+const EXPECTED_ENVIRONMENTS = ['Production', 'Development', 'Staging'];
+
+/** Extract the full embedded OpenCollection payload from the generated docs HTML. */
+const parseGeneratedOpenCollection = (html: string): Record<string, any> => {
+  const match = html.match(/const collectionData = ("(?:\\.|[^"\\])*");/);
+  if (!match) {
+    throw new Error('Could not find the embedded collection data in the generated documentation');
+  }
+  const yamlContent = JSON.parse(match[1]) as string;
+  return jsyaml.load(yamlContent) as Record<string, any>;
+};
+
+/** Names of the environments embedded in the generated docs (under config.environments). */
+const generatedEnvironmentNames = (html: string): string[] => {
+  const oc = parseGeneratedOpenCollection(html);
+  const environments = (oc?.config?.environments ?? []) as Array<Record<string, any>>;
+  return environments.map((env) => env?.name);
+};
+
+/** Text rendered by the header count, e.g. `(2/3 selected)`. */
+const selectedCountText = (selected: number): string => `(${selected}/${EXPECTED_ENVIRONMENTS.length} selected)`;
+
+/**
+ * Open the Generate Documentation modal from the collection context menu and wait until
+ * every fixture environment row has rendered, so selection/count assertions are stable.
+ */
+const openDocsModalWithEnvironments = async (page: Page) => {
+  const locators = buildCommonLocators(page);
+
+  await locators.sidebar.collection(COLLECTION_NAME).hover();
+  await locators.actions.collectionActions(COLLECTION_NAME).click();
+  await locators.generateDocs.menuItem().click();
+
+  const modal = locators.generateDocs.modal();
+  await expect(modal).toBeVisible();
+  await expect(locators.generateDocs.environmentRows()).toHaveCount(EXPECTED_ENVIRONMENTS.length);
+
+  return { locators, modal };
+};
+
 test.describe('Generate Documentation', () => {
   test('orders generated docs to match the sidebar tree (folders by seq, then requests by seq, recursively)', async ({
     pageWithUserData: page
@@ -107,8 +151,6 @@ test.describe('Generate Documentation', () => {
   }) => {
     const locators = buildCommonLocators(page);
 
-    await waitForCollectionMount(page, COLLECTION_NAME);
-
     await locators.sidebar.collection(COLLECTION_NAME).hover();
     await locators.actions.collectionActions(COLLECTION_NAME).click();
     await locators.generateDocs.menuItem().click();
@@ -121,5 +163,188 @@ test.describe('Generate Documentation', () => {
     // Cancel so the test leaves no download behind.
     await locators.generateDocs.cancelButton().click();
     await expect(modal).toBeHidden();
+  });
+
+  test('shows the current collection version verbatim, consistent with the settings page', async ({
+    pageWithUserData: page
+  }) => {
+    const locators = buildCommonLocators(page);
+
+    await locators.sidebar.collection(COLLECTION_NAME).hover();
+    await locators.actions.collectionActions(COLLECTION_NAME).click();
+    await locators.generateDocs.menuItem().click();
+
+    const modal = locators.generateDocs.modal();
+    await expect(modal).toBeVisible();
+
+    await expect(locators.generateDocs.collectionName()).toHaveText(COLLECTION_NAME);
+
+    // The user-facing collection version (bruno.json `collectionVersion`), not the schema `version`.
+    await expect(locators.generateDocs.versionValue()).toHaveText('Version: 2.5');
+
+    // The fixture has 2 folders (Zoo, Aviary) and 5 requests (Lion, Bear, Parrot,
+    // ReqAlpha, ReqBeta), counted recursively across the whole tree.
+    await expect(locators.generateDocs.versionCounts()).toContainText('2 Folders');
+    await expect(locators.generateDocs.versionCounts()).toContainText('5 requests');
+
+    // This collection has environments, so the "0 environments" hint is not shown.
+    await expect(locators.generateDocs.versionCounts()).not.toContainText('environments');
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('lists every environment under "Environments to include", none selected by default', async ({
+    pageWithUserData: page
+  }) => {
+    const locators = buildCommonLocators(page);
+
+    await locators.sidebar.collection(COLLECTION_NAME).hover();
+    await locators.actions.collectionActions(COLLECTION_NAME).click();
+    await locators.generateDocs.menuItem().click();
+
+    const modal = locators.generateDocs.modal();
+    await expect(modal).toBeVisible();
+    await expect(locators.generateDocs.environmentsTitle()).toBeVisible();
+
+    for (const name of EXPECTED_ENVIRONMENTS) {
+      await expect(locators.generateDocs.environmentRow(name)).toBeVisible();
+      await expect(locators.generateDocs.environmentCheckbox(name)).not.toBeChecked();
+    }
+
+    // Exactly the fixture's environments are listed — nothing more.
+    await expect(locators.generateDocs.environmentRows()).toHaveCount(EXPECTED_ENVIRONMENTS.length);
+
+    await expect(locators.generateDocs.selectAllCheckbox()).not.toBeChecked();
+    await expect(locators.generateDocs.selectedCount()).toHaveText(selectedCountText(0));
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('includes no environments in the generated docs by default', async ({
+    pageWithUserData: page
+  }) => {
+    const locators = buildCommonLocators(page);
+
+    const { content } = await generateCollectionDocs(page, COLLECTION_NAME, async () => {
+      await expect(locators.generateDocs.environmentRows()).toHaveCount(EXPECTED_ENVIRONMENTS.length);
+      await expect(locators.generateDocs.selectedCount()).toHaveText(selectedCountText(0));
+    });
+
+    expect(generatedEnvironmentNames(content)).toEqual([]);
+  });
+
+  test('includes only the environments the user explicitly selects', async ({
+    pageWithUserData: page
+  }) => {
+    const locators = buildCommonLocators(page);
+
+    const { content } = await generateCollectionDocs(page, COLLECTION_NAME, async () => {
+      // Wait for all environments to load, then opt a single one in.
+      await expect(locators.generateDocs.environmentRows()).toHaveCount(EXPECTED_ENVIRONMENTS.length);
+      await locators.generateDocs.environmentCheckbox('Development').check();
+      await expect(locators.generateDocs.environmentCheckbox('Development')).toBeChecked();
+    });
+
+    const envNames = generatedEnvironmentNames(content);
+    expect(envNames).toContain('Development');
+    expect(envNames).not.toContain('Production');
+    expect(envNames).not.toContain('Staging');
+  });
+
+  test('shows an empty "Select All" and a zero count when nothing is selected by default', async ({
+    pageWithUserData: page
+  }) => {
+    const { locators, modal } = await openDocsModalWithEnvironments(page);
+
+    await expect(locators.generateDocs.selectAllLabel()).toContainText('Select All');
+    await expect(locators.generateDocs.selectAllCheckbox()).not.toBeChecked();
+    await expect(locators.generateDocs.selectedCount()).toHaveText(selectedCountText(0));
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('shows "Select All" as indeterminate with a partial count when one environment is selected', async ({
+    pageWithUserData: page
+  }) => {
+    const { locators, modal } = await openDocsModalWithEnvironments(page);
+
+    await locators.generateDocs.environmentCheckbox('Development').check();
+
+    // Some-but-not-all selected -> tri-state checkbox shows the indeterminate state.
+    await expect(locators.generateDocs.selectAllCheckbox()).toBeChecked({ indeterminate: true });
+    await expect(locators.generateDocs.selectedCount()).toHaveText(selectedCountText(1));
+
+    const indeterminateStyles = await locators.generateDocs.selectAllCheckbox().evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { appearance: style.appearance, backgroundColor: style.backgroundColor, accentColor: style.accentColor };
+    });
+    expect(indeterminateStyles.appearance).toBe('none');
+    expect(indeterminateStyles.backgroundColor).toBe(indeterminateStyles.accentColor);
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('clicking "Select All" selects every environment, filling the checkbox and count', async ({
+    pageWithUserData: page
+  }) => {
+    const { locators, modal } = await openDocsModalWithEnvironments(page);
+    await expect(locators.generateDocs.selectAllCheckbox()).not.toBeChecked();
+
+    await locators.generateDocs.selectAllCheckbox().click();
+
+    await expect(locators.generateDocs.selectAllCheckbox()).toBeChecked();
+    await expect(locators.generateDocs.selectedCount()).toHaveText(
+      selectedCountText(EXPECTED_ENVIRONMENTS.length)
+    );
+    for (const name of EXPECTED_ENVIRONMENTS) {
+      await expect(locators.generateDocs.environmentCheckbox(name)).toBeChecked();
+    }
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('clicking "Select All" from a partial selection selects every environment', async ({
+    pageWithUserData: page
+  }) => {
+    const { locators, modal } = await openDocsModalWithEnvironments(page);
+
+    // Drop into the partial (indeterminate) state first.
+    await locators.generateDocs.environmentCheckbox('Development').check();
+    await expect(locators.generateDocs.selectAllCheckbox()).toBeChecked({ indeterminate: true });
+
+    // Clicking the tri-state checkbox while partial selects everything.
+    await locators.generateDocs.selectAllCheckbox().click();
+
+    await expect(locators.generateDocs.selectAllCheckbox()).toBeChecked();
+    await expect(locators.generateDocs.selectedCount()).toHaveText(
+      selectedCountText(EXPECTED_ENVIRONMENTS.length)
+    );
+    for (const name of EXPECTED_ENVIRONMENTS) {
+      await expect(locators.generateDocs.environmentCheckbox(name)).toBeChecked();
+    }
+
+    await locators.generateDocs.cancelButton().click();
+    await expect(modal).toBeHidden();
+  });
+
+  test('selecting everything via "Select All" includes all environments in the generated docs', async ({
+    pageWithUserData: page
+  }) => {
+    const locators = buildCommonLocators(page);
+
+    const { content } = await generateCollectionDocs(page, COLLECTION_NAME, async () => {
+      await expect(locators.generateDocs.environmentRows()).toHaveCount(EXPECTED_ENVIRONMENTS.length);
+      await locators.generateDocs.selectAllCheckbox().click();
+      await expect(locators.generateDocs.selectedCount()).toHaveText(
+        selectedCountText(EXPECTED_ENVIRONMENTS.length)
+      );
+    });
+
+    expect(generatedEnvironmentNames(content).sort()).toEqual([...EXPECTED_ENVIRONMENTS].sort());
   });
 });

@@ -1,6 +1,6 @@
 import type { UID, Annotation } from '../common';
 
-export type EnvironmentVariableDatatype = 'string' | 'number' | 'boolean' | 'object';
+export type EnvironmentVariableDataType = 'string' | 'number' | 'boolean' | 'object';
 
 export interface EnvironmentVariable {
   uid: UID;
@@ -9,7 +9,8 @@ export interface EnvironmentVariable {
   type: 'text';
   enabled?: boolean;
   secret?: boolean;
-  datatype?: EnvironmentVariableDatatype;
+  description?: string | null;
+  dataType?: EnvironmentVariableDataType;
   annotations?: Annotation[] | null;
 }
 
