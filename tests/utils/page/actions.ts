@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { buildCommonLocators, buildScriptErrorLocators, buildGrpcCommonLocators, PresetRequestType } from './locators';
 import { waitForCollectionMount } from './mounting';
 import { buildPreferencesLocators, openPreferences, selectPreferencesTab } from './preferences';
+import { EmptyStateRequestType } from './sidebar';
 
 type SandboxMode = 'safe' | 'developer';
 
@@ -385,6 +386,51 @@ const setRequestTypePreset = async (page: Page, collectionName: string, requestT
 
     // the settings tab keeps a draft indicator until the presets are persisted
     await expect(locators.tabs.tabDraftIndicator(locators.tabs.collectionSettingsTab())).toBeHidden();
+  });
+};
+
+/**
+ * Set the Base URL preset for a collection.
+ * New requests created in the collection inherit this as their starting URL.
+ * @param page - The page object
+ * @param collectionName - The name of the collection
+ * @param requestUrl - The Base URL to save as the preset
+ * @returns void
+ */
+const setRequestUrlPreset = async (page: Page, collectionName: string, requestUrl: string) => {
+  await test.step(`Set the Base URL preset to "${requestUrl}"`, async () => {
+    const locators = buildCommonLocators(page);
+
+    await openCollectionSettings(page, collectionName);
+    await selectCollectionPaneTab(page, 'presets');
+
+    const urlInput = locators.presets.requestUrl();
+    await urlInput.waitFor({ state: 'visible' });
+    await urlInput.fill(requestUrl);
+    await locators.presets.saveBtn().click();
+
+    await locators.tabs.tabDraftIndicator(locators.tabs.collectionSettingsTab()).waitFor({ state: 'hidden' });
+  });
+};
+
+/**
+ * Create a request from the "+ Add request" CTA shown inside an empty collection.
+ * @param page - The page object
+ * @param collectionName - The name of the collection
+ * @param requestType - The request type to pick from the CTA menu (defaults to http)
+ * @returns void
+ */
+const createRequestFromEmptyStateCta = async (
+  page: Page,
+  collectionName: string,
+  requestType: EmptyStateRequestType = 'http'
+) => {
+  await test.step(`Create a ${requestType} request from the "+ Add request" CTA`, async () => {
+    const { sidebar } = buildCommonLocators(page);
+
+    await sidebar.collection(collectionName).click();
+    await sidebar.emptyStateCta(collectionName).click();
+    await sidebar.emptyStateCtaItem(requestType).click();
   });
 };
 
@@ -1891,6 +1937,37 @@ const selectGrpcMethod = async (page: Page, methodName: string) => {
 };
 
 /**
+ * Close every open request tab, discarding or saving based on the saveChanges flag.
+ *
+ * @param page - The page object
+ * @returns void
+ */
+const closeAllOpenTabs = async (page: Page, saveChanges = false) => {
+  await test.step(`Close all tabs, ${saveChanges ? 'saving' : 'discarding'} changes`, async () => {
+    const locators = buildCommonLocators(page);
+    const closableTabs = locators.tabs.closableTabs();
+    const confirmClose = page.locator('.bruno-modal').filter({ hasText: 'Unsaved changes' });
+    const resolveButton = saveChanges
+      ? confirmClose.getByRole('button', { name: /^Save( All)?$/ })
+      : confirmClose.getByRole('button', { name: 'Don\'t Save' });
+
+    const pressCloseAllTabs = async () => {
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.keyboard.press('ControlOrMeta+Shift+W');
+    };
+
+    await pressCloseAllTabs();
+
+    await expect(async () => {
+      if (await confirmClose.isVisible()) {
+        await resolveButton.click();
+      }
+      await expect(closableTabs).toHaveCount(0, { timeout: 1000 });
+    }).toPass({ timeout: 15000 });
+  });
+};
+
+/**
  * Close all open request tabs using the right-click context menu
  * @param page - The page object
  * @returns void
@@ -3170,6 +3247,8 @@ export {
   createTransientRequest,
   createTransientRequestFromPreset,
   setRequestTypePreset,
+  setRequestUrlPreset,
+  createRequestFromEmptyStateCta,
   fillRequestUrl,
   deleteRequest,
   deleteCollectionFromOverview,
@@ -3227,6 +3306,7 @@ export {
   generateGrpcSampleMessage,
   selectGrpcMethod,
   closeAllTabs,
+  closeAllOpenTabs,
   switchToOpenTab,
   createWorkspace,
   switchWorkspace,
